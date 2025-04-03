@@ -1,5 +1,4 @@
 
-
 ```html
 <!DOCTYPE html>
 <html lang="en">
@@ -32,6 +31,7 @@
             border-radius: 4px;
             overflow: hidden;
             background: #f0f0f0;
+            position: relative;
         }
         .image-container img {
             max-width: 100%;
@@ -67,6 +67,7 @@
             border-radius: 4px;
             cursor: pointer;
             transition: background 0.3s;
+            margin: 0 5px;
         }
         button:hover {
             background: #1565c0;
@@ -75,14 +76,49 @@
             background: #bbdefb;
             cursor: not-allowed;
         }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-radius: 50%;
+            border-left-color: #1976d2;
+            animation: spin 1s linear infinite;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin: -20px 0 0 -20px;
+            display: none;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .cache-status {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
         .counter {
             margin-top: 20px;
             font-style: italic;
             color: #666;
         }
-        .loading {
-            font-style: italic;
-            color: #666;
+        .history-button {
+            background: #4caf50;
+        }
+        .history-button:hover {
+            background: #388e3c;
+        }
+        .next-button {
+            background: #f57c00;
+        }
+        .next-button:hover {
+            background: #ef6c00;
         }
     </style>
 </head>
@@ -92,11 +128,12 @@
 
     <div class="artwork-container">
         <div class="image-container">
-            <img id="artwork-image" src="" alt="Loading artwork...">
+            <img id="artwork-image" src="" alt="Discover artwork">
+            <div id="spinner" class="spinner"></div>
         </div>
         
         <div class="artwork-info">
-            <div id="loading-message" class="loading">Press "Discover Art" to begin your journey</div>
+            <div id="loading-message">Press "Discover Art" to begin your journey</div>
             <div id="artwork-details" style="display: none;">
                 <div id="artwork-title" class="artwork-title"></div>
                 <div id="artwork-artist"></div>
@@ -111,7 +148,15 @@
             <p id="fact-text"></p>
         </div>
         
-        <button id="discover-button">Discover Art</button>
+        <div class="controls">
+            <button id="previous-button" disabled>Previous</button>
+            <button id="discover-button">Discover Art</button>
+            <button id="next-button" disabled>Next</button>
+        </div>
+        
+        <div class="cache-status">
+            <span id="cache-info">No artworks in cache yet</span>
+        </div>
     </div>
     
     <div class="counter">
@@ -121,6 +166,7 @@
     <script>
         // Elements
         const artworkImage = document.getElementById('artwork-image');
+        const spinner = document.getElementById('spinner');
         const loadingMessage = document.getElementById('loading-message');
         const artworkDetails = document.getElementById('artwork-details');
         const artworkTitle = document.getElementById('artwork-title');
@@ -131,10 +177,16 @@
         const secretFact = document.getElementById('secret-fact');
         const factText = document.getElementById('fact-text');
         const discoverButton = document.getElementById('discover-button');
+        const previousButton = document.getElementById('previous-button');
+        const nextButton = document.getElementById('next-button');
         const seenCount = document.getElementById('seen-count');
+        const cacheInfo = document.getElementById('cache-info');
         
-        // State
-        let artworksSeen = 0;
+        // Cache system
+        let artworkCache = [];
+        let currentIndex = -1;
+        let preloadingNext = false;
+        let nextArtwork = null;
         
         // Generic facts for random artworks
         const facts = [
@@ -149,6 +201,40 @@
             "If this artwork could speak, it would tell of being witnessed by countless eyes across generations, each seeing something unique based on their own experiences.",
             "The Met acquires new works through purchases and gifts, expanding their collection even as you view this piece."
         ];
+        
+        // Show loading state
+        function showLoading() {
+            spinner.style.display = 'block';
+            loadingMessage.textContent = 'Finding an amazing artwork...';
+            loadingMessage.style.display = 'block';
+            artworkDetails.style.display = 'none';
+            secretFact.style.display = 'none';
+            discoverButton.disabled = true;
+        }
+        
+        // Hide loading state
+        function hideLoading() {
+            spinner.style.display = 'none';
+            loadingMessage.style.display = 'none';
+            artworkDetails.style.display = 'block';
+            secretFact.style.display = 'block';
+            discoverButton.disabled = false;
+        }
+        
+        // Update navigation buttons
+        function updateNavButtons() {
+            previousButton.disabled = currentIndex <= 0;
+            nextButton.disabled = currentIndex >= artworkCache.length - 1;
+        }
+        
+        // Update cache info display
+        function updateCacheInfo() {
+            if (artworkCache.length === 0) {
+                cacheInfo.textContent = 'No artworks in cache yet';
+            } else {
+                cacheInfo.textContent = `Viewing ${currentIndex + 1} of ${artworkCache.length} cached artworks`;
+            }
+        }
         
         // Get a random artwork from the Met API
         async function getRandomArtwork() {
@@ -195,87 +281,107 @@
             
             // Update artwork details
             artworkTitle.textContent = artwork.title || 'Untitled';
-            artworkArtist.textContent = artwork.artistDisplayName ? `Artist: ${artwork.artistDisplayName}` : 'Artist: Unknown';
-            artworkDate.textContent = artwork.objectDate ? `Date: ${artwork.objectDate}` : '';
-            artworkMedium.textContent = artwork.medium ? `Medium: ${artwork.medium}` : '';
-            artworkDepartment.textContent = artwork.department ? `Department: ${artwork.department}${artwork.culture ? ` - ${artwork.culture}` : ''}` : '';
-            
-            // Show artwork details
-            loadingMessage.style.display = 'none';
-            artworkDetails.style.display = 'block';
+            artworkArtist.textContent = artwork.artistDisplayName ? 
+                `Artist: ${artwork.artistDisplayName}` : 'Artist: Unknown';
+            artworkDate.textContent = artwork.objectDate ? 
+                `Date: ${artwork.objectDate}` : '';
+            artworkMedium.textContent = artwork.medium ? 
+                `Medium: ${artwork.medium}` : '';
+            artworkDepartment.textContent = artwork.department ? 
+                `Department: ${artwork.department}${artwork.culture ? ` - ${artwork.culture}` : ''}` : '';
             
             // Generate and show a fact
-            factText.textContent = generateFact(artwork);
-            secretFact.style.display = 'block';
+            factText.textContent = artwork.fact || generateFact(artwork);
             
-            // Update counter
-            artworksSeen++;
-            seenCount.textContent = artworksSeen;
+            // Update navigation and cache info
+            updateNavButtons();
+            updateCacheInfo();
         }
         
-        // Handle the discover button click
-        async function discoverArt() {
-            // Show loading state
-            discoverButton.disabled = true;
-            discoverButton.textContent = 'Finding an artwork...';
-            loadingMessage.textContent = 'Searching the vast Met collection...';
-            loadingMessage.style.display = 'block';
-            artworkDetails.style.display = 'none';
-            secretFact.style.display = 'none';
+        // Preload the next artwork in the background
+        async function preloadNextArtwork() {
+            if (preloadingNext) return;
+            
+            preloadingNext = true;
+            try {
+                const artwork = await getRandomArtwork();
+                // Generate and store a fact for this artwork
+                artwork.fact = generateFact(artwork);
+                
+                // Preload the image
+                const img = new Image();
+                img.src = artwork.primaryImage;
+                
+                // Store the artwork for later use
+                nextArtwork = artwork;
+            } catch (error) {
+                console.error('Error preloading next artwork:', error);
+            } finally {
+                preloadingNext = false;
+            }
+        }
+        
+        // Handle discovering new artwork
+        async function discoverNewArt() {
+            showLoading();
             
             try {
-                // Get a random artwork
-                const artwork = await getRandomArtwork();
+                let artwork;
+                
+                // Use preloaded artwork if available
+                if (nextArtwork) {
+                    artwork = nextArtwork;
+                    nextArtwork = null;
+                } else {
+                    artwork = await getRandomArtwork();
+                    // Generate and store a fact for this artwork
+                    artwork.fact = generateFact(artwork);
+                }
+                
+                // Add to cache and update current index
+                artworkCache.push(artwork);
+                currentIndex = artworkCache.length - 1;
                 
                 // Display the artwork
                 displayArtwork(artwork);
+                
+                // Update seen count
+                seenCount.textContent = artworkCache.length;
+                
+                // Start preloading the next artwork
+                preloadNextArtwork();
             } catch (error) {
-                // Show error message
                 loadingMessage.textContent = 'Oops! Had trouble finding an artwork. Please try again.';
+            } finally {
+                hideLoading();
             }
-            
-            // Reset button
-            discoverButton.disabled = false;
-            discoverButton.textContent = 'Discover Art';
         }
         
-        // Set up discover button
-        discoverButton.addEventListener('click', discoverArt);
+        // Navigate to previous artwork
+        function showPreviousArtwork() {
+            if (currentIndex > 0) {
+                currentIndex--;
+                displayArtwork(artworkCache[currentIndex]);
+            }
+        }
+        
+        // Navigate to next artwork
+        function showNextArtwork() {
+            if (currentIndex < artworkCache.length - 1) {
+                currentIndex++;
+                displayArtwork(artworkCache[currentIndex]);
+            }
+        }
+        
+        // Set up event listeners
+        discoverButton.addEventListener('click', discoverNewArt);
+        previousButton.addEventListener('click', showPreviousArtwork);
+        nextButton.addEventListener('click', showNextArtwork);
+        
+        // Initialize by preloading the first artwork
+        preloadNextArtwork();
     </script>
 </body>
 </html>
 ```
 
-This clean implementation:
-
-1. **Accesses the entire Met collection** - Truly random artworks from across all departments
-2. **Uses simple, modern JavaScript** - Clean async/await syntax for API calls
-3. **Has proper error handling** - Gracefully handles API failures
-4. **Is visually appealing** - Better styling and user experience
-5. **Works on all devices** - Responsive design that works on mobile and desktop
-6. **Is maintainable** - Well-structured code that's easy to modify
-7. **Has no workarounds** - Direct API access without hacks or limitations
-
-To implement this:
-
-### On Netlify (easiest option):
-1. Save this code as `index.html` in a folder on your computer
-2. Go to [Netlify Drop](https://app.netlify.com/drop)
-3. Drag and drop your folder onto the Netlify page
-4. That's it! Your site is live with a Netlify domain (which you can customize)
-
-### On GitHub Pages:
-1. Create a GitHub account if you don't have one
-2. Create a new repository
-3. Upload this file as `index.html`
-4. Go to repository Settings → Pages
-5. Enable GitHub Pages on the main branch
-6. Your site will be live at username.github.io/repository-name
-
-### On Vercel:
-1. Save this code as `index.html` in a folder
-2. Install Vercel CLI or use their web interface
-3. Deploy with a single command or drag-and-drop
-4. Your site will be live instantly
-
-Any of these platforms will let you create the experience you want without any of the limitations you've been facing with Cargo Collective or GoDaddy.​​​​​​​​​​​​​​​​
